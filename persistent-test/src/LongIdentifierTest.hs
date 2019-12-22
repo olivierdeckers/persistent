@@ -16,8 +16,7 @@ import Init
 
 -- This test is designed to create very long identifier names
 
--- MySQL: This test is disabled for MySQL because MySQL requires you to truncate long identifiers yourself. Good easy issue to fix
--- Postgres: See 
+-- MySQL: This test is disabled for MySQL because MySQL requires you to truncate long identifiers yourself. Good easy issue to fix 
 -- Postgres automatically truncates too long identifiers to a combination of:
 -- truncatedTableName + "_" + truncatedColumnName + "_fkey"
 -- 

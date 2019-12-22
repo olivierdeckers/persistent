@@ -11,6 +11,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE PatternGuards #-}
+{-# LANGUAGE MultiWayIf #-}
 
 -- | A postgresql backend for persistent.
 module Database.Persist.Postgresql
@@ -1152,45 +1153,33 @@ instance PersistConfig PostgresConf where
 
 refName :: DBName -> DBName -> DBName
 refName (DBName table) (DBName column) =
-    let idealName = T.concat [table, "_", column, "_fkey"]
-    in DBName (if T.length idealName <= maximumIdentifierLength then idealName else truncatedName)
+    let overhead = T.length $ T.concat ["_", "_fkey"]
+        (fromTable, fromColumn) = shortenNames overhead (T.length table, T.length column)
+    in DBName $ T.concat [T.take fromTable table, "_", T.take fromColumn column, "_fkey"]
 
     where
 
-      -- Postgres automatically truncates too long identifiers to a combination of
+      -- Postgres automatically truncates too long foreign keys to a combination of
       -- truncatedTableName + "_" + truncatedColumnName + "_fkey"
       -- This works fine for normal use cases, but it creates an issue for Persistent
       -- Because after running the migrations, Persistent sees the truncated foreign key constraint
       -- doesn't have the expected name, and suggests that you migrate again
       -- To workaround this, we copy the Postgres truncation approach before sending foreign key constraints to it.
-      -- We could also truncate all identifiers with just T.take maximumIdentifierLength
-      -- But matching Postgres' algorithm gives a) better names b) compatibility with manual migrations.
       --
-      -- I believe this will also be an issue for extremely long table names, but it's just much more likely to exist with foreign key constraints because they're usually tablename * 2 in length
-      truncatedName :: Text
-      truncatedName =
-        let fixedCharactersLength = T.length $ T.concat ["_", "_fkey"]
-            startingCharacterAmount = maximumIdentifierLength - fixedCharactersLength
-            (amount, remainder) = startingCharacterAmount `divMod` 2
+      -- I believe this will also be an issue for extremely long table names, 
+      -- but it's just much more likely to exist with foreign key constraints because they're usually tablename * 2 in length
 
-            tableLimit = amount + remainder
-            columnLimit = amount
+      -- Approximation of the algorithm Postgres uses to truncate identifiers
+      -- See makeObjectName https://github.com/postgres/postgres/blob/5406513e997f5ee9de79d4076ae91c04af0c52f6/src/backend/commands/indexcmds.c#L2074-L2080
+      shortenNames :: Int -> (Int, Int) -> (Int, Int)
+      shortenNames overhead (x, y) =
+        if | x + y + overhead <= maximumIdentifierLength -> (x, y)
+           | x > y -> shortenNames overhead (x - 1, y)
+           | otherwise -> shortenNames overhead (x, y - 1)
 
-            tableLength = T.length table
-            columnLength = T.length column
-        in
-
-          let (truncatedTable, truncatedColumn) = if tableLength <= tableLimit then
-                let newColumnLimit = columnLimit + (tableLimit - tableLength)
-                in (table, T.take newColumnLimit column)
-                else if (columnLength <= columnLimit) then
-                  let newTableLimit = tableLimit + (columnLimit - columnLength)
-                  in (T.take newTableLimit table, column)
-                else (T.take tableLimit table, T.take columnLimit column)
-
-          in T.concat [truncatedTable, "_", truncatedColumn, "_fkey"]
-
--- Postgres silently truncates identifiers above this length
+-- | Postgres' default maximum identifier length in bytes
+-- (You can re-compile Postgres with a new limit, but I'm assuming that virtually noone does this).
+-- See https://www.postgresql.org/docs/11/sql-syntax-lexical.html#SQL-SYNTAX-IDENTIFIERS
 maximumIdentifierLength :: Int
 maximumIdentifierLength = 63
 
